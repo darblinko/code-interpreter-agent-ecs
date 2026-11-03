@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+infra
+docs
+scripts
+tests
+**/__pycache__
+cdk.out
+.env
+.env.*
+*.md
