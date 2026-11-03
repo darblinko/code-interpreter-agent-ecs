@@ -1,0 +1,25 @@
+{
+  "app": "python3 app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "requirements*.txt", ".venv", "cdk.out", "**/__pycache__"]
+  },
+  "context": {
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false,
+    "egress_mode": "nat",
+    "cpu_arch": "arm64",
+    "cpu": 512,
+    "memory_mib": 1024,
+    "desired_count": 1,
+    "autoscaling": false,
+    "max_count": 2,
+    "openai_enabled": false,
+    "public_https": false,
+    "certificate_arn": "",
+    "public_ingress_cidr": "",
+    "destroy_on_delete": false,
+    "monthly_budget_usd": 50,
+    "notification_email": ""
+  }
+}
