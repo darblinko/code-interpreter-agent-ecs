@@ -2,7 +2,6 @@ import json
 
 import pytest
 from aws_cdk.assertions import Match
-
 from conftest import cdk_json_context
 
 PUBLIC = {
