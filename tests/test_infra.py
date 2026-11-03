@@ -143,7 +143,10 @@ def test_readonly_root_filesystem_and_writable_volumes(service):
     mounts = {m["ContainerPath"]: m for m in definition["MountPoints"]}
     assert set(mounts) == {"/workspace", "/tmp"}
     assert not any(m.get("ReadOnly") for m in mounts.values())
-    assert definition["LinuxParameters"]["Capabilities"]["Drop"] == ["ALL"]
+    capabilities = definition["LinuxParameters"]["Capabilities"]
+    assert capabilities["Drop"] == ["ALL"]
+    # Exactly the two capabilities needed to start code workers under another UID.
+    assert sorted(capabilities["Add"]) == ["SETGID", "SETUID"]
     assert definition["PortMappings"][0]["ContainerPort"] == 8080
 
 
@@ -207,3 +210,17 @@ def test_cdk_json_defaults_are_cheapest_safe():
     assert context["desired_count"] == 1
     assert (context["cpu"], context["memory_mib"]) == (512, 1024)
     assert context["cpu_arch"] == "arm64"
+
+
+def test_api_token_injected_only_when_enabled(synth):
+    template = synth(api_token_enabled=True)["CodeInterpreterAgentService"]
+    assert "SERVICE_API_TOKEN" in {s["Name"] for s in container(template)["Secrets"]}
+    default = synth()["CodeInterpreterAgentService"]
+    assert "SERVICE_API_TOKEN" not in {s["Name"] for s in container(default)["Secrets"]}
+
+
+def test_task_does_not_force_a_user_or_extra_privileges(service):
+    definition = container(service)
+    assert definition.get("Privileged") in (None, False)
+    assert "User" not in definition
+    assert "SYS_ADMIN" not in str(definition["LinuxParameters"])

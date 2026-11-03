@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Calls GET /health and one POST /v1/run. Read-only against AWS (describe-stacks only).
 # BASE_URL overrides the stack output. SMOKE_BODY overrides the request body.
+# SMOKE_TOKEN, if set, is sent as a bearer token (needed when SERVICE_API_TOKEN is enabled).
+# Request schema: {"session_id": "...", "message": "..."}. The reply is {"session_id", "events"}.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 resolve_region
@@ -31,7 +33,7 @@ done
 ok "/health returned 200"
 
 echo "POST /v1/run"
-response="$(curl -s -w '\n%{http_code}' --max-time 180 -H 'Content-Type: application/json' -d "$SMOKE_BODY" "$BASE_URL/v1/run")"
+response="$(curl -s -w '\n%{http_code}' --max-time 180 -H 'Content-Type: application/json' ${SMOKE_TOKEN:+-H "Authorization: Bearer $SMOKE_TOKEN"} -d "$SMOKE_BODY" "$BASE_URL/v1/run")"
 code="${response##*$'\n'}"
 echo "${response%$'\n'*}" | head -c 2000; echo
 [ "$code" = "200" ] || die "/v1/run returned HTTP $code"

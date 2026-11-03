@@ -18,6 +18,7 @@ class Config:
     autoscaling: bool
     max_count: int
     openai_enabled: bool
+    api_token_enabled: bool
     public_https: bool
     certificate_arn: str
     public_ingress_cidr: str
@@ -40,6 +41,7 @@ class Config:
             autoscaling=_as_bool(get("autoscaling", False)),
             max_count=int(get("max_count", 2)),
             openai_enabled=_as_bool(get("openai_enabled", False)),
+            api_token_enabled=_as_bool(get("api_token_enabled", False)),
             public_https=_as_bool(get("public_https", False)),
             certificate_arn=str(get("certificate_arn", "")),
             public_ingress_cidr=str(get("public_ingress_cidr", "")),

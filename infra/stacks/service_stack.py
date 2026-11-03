@@ -134,6 +134,9 @@ class ServiceStack(cdk.Stack):
     def _linux_parameters(self) -> ecs.LinuxParameters:
         params = ecs.LinuxParameters(self, "LinuxParams", init_process_enabled=True)
         params.drop_capabilities(ecs.Capability.ALL)
+        # The entrypoint starts as root to switch to the app user and keeps these two so the
+        # API process can start code workers under the sandbox UID. See docs/security.md.
+        params.add_capabilities(ecs.Capability.SETUID, ecs.Capability.SETGID)
         return params
 
     def _build_image(self, arch: str) -> ecs.ContainerImage:
@@ -153,6 +156,8 @@ class ServiceStack(cdk.Stack):
         fields = ["ANTHROPIC_API_KEY"]
         if self.config.openai_enabled:
             fields.append("OPENAI_API_KEY")
+        if self.config.api_token_enabled:
+            fields.append("SERVICE_API_TOKEN")
         return {name: ecs.Secret.from_secrets_manager(secret, name) for name in fields}
 
     def _build_service(self, task_definition: ecs.FargateTaskDefinition) -> ecs.FargateService:

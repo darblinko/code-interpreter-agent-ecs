@@ -15,6 +15,7 @@
     "autoscaling": false,
     "max_count": 2,
     "openai_enabled": false,
+    "api_token_enabled": false,
     "public_https": false,
     "certificate_arn": "",
     "public_ingress_cidr": "",
