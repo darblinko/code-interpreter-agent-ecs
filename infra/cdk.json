@@ -19,7 +19,7 @@
     "certificate_arn": "",
     "public_ingress_cidr": "",
     "destroy_on_delete": false,
-    "monthly_budget_usd": 50,
+    "monthly_budget_usd": 100,
     "notification_email": ""
   }
 }
