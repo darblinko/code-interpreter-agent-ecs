@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r infra/requirements-dev.txt -r service/requirements.txt ruff
+      - run: ruff check .
+      - run: ruff format --check service
+      # Includes app.synth() of both stacks with offline context; no AWS credentials are used.
+      - run: python -m pytest -q
+      - name: Container isolation test
+        run: CIA_CONTAINER_TESTS=1 python -m pytest tests/test_container_isolation.py -q
