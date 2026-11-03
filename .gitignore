@@ -8,3 +8,5 @@ __pycache__/
 .env
 .env.*
 !.env.example
+cdk.context.json
+infra/cdk.context.json
