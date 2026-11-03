@@ -18,8 +18,8 @@ def test_shell_syntax(name):
 
 def test_preflight_never_deploys():
     text = (SCRIPTS / "preflight.sh").read_text()
-    for forbidden in ("cdk deploy", "run_cdk", "put-secret-value", "create-stack", "bootstrap "):
-        assert forbidden not in text.replace("Run: npx", "")
+    for forbidden in ("cdk deploy", "run_cdk", "put-secret-value", "create-stack", "delete-stack"):
+        assert forbidden not in text
 
 
 def test_deploy_requires_typed_stack_name():
