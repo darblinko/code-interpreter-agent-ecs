@@ -13,7 +13,7 @@ The service executes Python written by a language model, steered by whatever tex
 | Scoped execution role | CDK-generated | Pulls the image, writes logs, reads one secret by exact ARN. The container process cannot obtain these credentials. |
 | No inbound except from the ALB | security groups | Task security group accepts only TCP 8080 from the ALB security group. |
 | Internal ALB by default | `public_https=false` | The ALB accepts TCP 80 only from the VPC CIDR. |
-| Restricted public mode | `public_https=true` | Requires an ACM certificate and a non-`0.0.0.0/0` CIDR; the stack refuses to synthesize otherwise. |
+| Restricted public mode | `public_https=true` | Requires an ACM certificate and a canonical IPv4 CIDR with a prefix of at least /1; the stack refuses to synthesize otherwise, including for `1.2.3.4/0`, which AWS would store as `0.0.0.0/0`. |
 | Egress limited to TCP 443 | task security group | Blocks other protocols and ports. DNS goes through the VPC resolver. |
 | Read-only root filesystem | task definition | Code cannot modify the image contents. Writable paths are `/workspace` and `/tmp` only. |
 | Capabilities: Fargate defaults dropped except `SETUID`, `SETGID` and `KILL` | task definition | The API process needs these three to start code workers under another UID and to kill them on timeout. Fargate accepts only `SYS_PTRACE` as an added capability, so the task definition adds nothing and drops the other 11 defaults. A test asserts the remaining set. |

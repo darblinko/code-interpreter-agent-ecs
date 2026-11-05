@@ -97,8 +97,9 @@ def test_service_ingress_only_from_alb(service):
 def test_public_mode_requires_certificate_and_restricted_cidr(synth):
     with pytest.raises(Exception, match="certificate_arn"):
         synth(public_https=True)
-    with pytest.raises(Exception, match="public_ingress_cidr"):
-        synth(**{**PUBLIC, "public_ingress_cidr": "0.0.0.0/0"})
+    for cidr in ("0.0.0.0/0", "1.2.3.4/0", "203.0.113.7/24", "203.0.113.7", "::/0", "", "x/32"):
+        with pytest.raises(Exception, match="public_ingress_cidr"):
+            synth(**{**PUBLIC, "public_ingress_cidr": cidr})
 
 
 def test_public_mode_with_certificate(synth):

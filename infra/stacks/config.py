@@ -1,4 +1,5 @@
 """Typed view of the CDK context. Values from `-c key=value` arrive as strings."""
+import ipaddress
 from dataclasses import dataclass
 
 from constructs import Construct
@@ -63,8 +64,18 @@ class Config:
     def _validate_public_https(self) -> None:
         if not self.certificate_arn.startswith("arn:") or ":acm:" not in self.certificate_arn:
             raise ValueError("public_https=true requires certificate_arn (an ACM certificate ARN)")
-        if not self.public_ingress_cidr or self.public_ingress_cidr == "0.0.0.0/0":
+        if not _is_restricted_ipv4_network(self.public_ingress_cidr):
             raise ValueError(
-                "public_https=true requires public_ingress_cidr set to a restricted CIDR "
-                "(for example your office /32). 0.0.0.0/0 is refused."
+                "public_https=true requires public_ingress_cidr set to a restricted IPv4 network "
+                "in canonical form (for example your office /32). Any /0 is refused."
             )
+
+
+def _is_restricted_ipv4_network(cidr: str) -> bool:
+    """True for a canonical IPv4 network with a prefix of at least /1. AWS canonicalizes
+    1.2.3.4/0 to 0.0.0.0/0, so host bits are rejected rather than masked."""
+    try:
+        network = ipaddress.IPv4Network(cidr, strict=True)
+    except ValueError:
+        return False
+    return "/" in cidr and network.prefixlen > 0

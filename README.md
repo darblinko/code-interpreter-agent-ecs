@@ -108,7 +108,7 @@ Defaults are in `infra/cdk.json`. Override with `key=value` arguments to `deploy
 | `autoscaling`, `max_count` | false, 2 | CPU target tracking at 60 percent when enabled |
 | `openai_enabled` | false | Also inject `OPENAI_API_KEY`. The secret must then contain that field. |
 | `api_token_enabled` | false | Also inject `SERVICE_API_TOKEN`; `/v1/run` then requires that bearer token. The secret must contain the field. |
-| `public_https` | false | Internet-facing ALB with HTTPS. Requires `certificate_arn` (ACM) and `public_ingress_cidr`. `0.0.0.0/0` is refused. |
+| `public_https` | false | Internet-facing ALB with HTTPS. Requires `certificate_arn` (ACM) and `public_ingress_cidr`, a canonical IPv4 network such as `203.0.113.7/32`. Any `/0` and any CIDR with host bits set (`1.2.3.4/0`) are refused. |
 | `notification_email` | empty | Enables the monthly budget and emails alarms |
 | `monthly_budget_usd` | 100 | Budget limit; alerts at 80 percent actual and 100 percent forecast |
 | `destroy_on_delete` | false | `true` sets removal policy DESTROY on the secret and log group at deploy time |
