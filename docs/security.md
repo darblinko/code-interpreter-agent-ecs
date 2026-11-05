@@ -8,13 +8,13 @@ The service executes Python written by a language model, steered by whatever tex
 
 | Control | Where | Effect |
 |---|---|---|
-| Fargate task isolation | AWS | Each task runs in its own microVM. Code in one task cannot reach another task or the host. |
+| Fargate task isolation | AWS | Each task runs in its own microVM with its own kernel, so code in one task cannot read another task's memory or processes or the host's. This is compute isolation only; network reachability is set by the security group (next rows). |
 | Empty task role | `TaskRole`, no policies | Credentials obtained from the task metadata endpoint grant no AWS permissions. |
 | Scoped execution role | CDK-generated | Pulls the image, writes logs, reads one secret by exact ARN. The container process cannot obtain these credentials. |
 | No inbound except from the ALB | security groups | Task security group accepts only TCP 8080 from the ALB security group. |
 | Internal ALB by default | `public_https=false` | The ALB accepts TCP 80 only from the VPC CIDR. |
 | Restricted public mode | `public_https=true` | Requires an ACM certificate and a canonical IPv4 CIDR with a prefix of at least /1; the stack refuses to synthesize otherwise, including for `1.2.3.4/0`, which AWS would store as `0.0.0.0/0`. |
-| Egress limited to TCP 443 | task security group | Blocks other protocols and ports. DNS goes through the VPC resolver. |
+| Egress limited to TCP 443 | task security group | Blocks other protocols and ports to routed addresses. The rule allows TCP 443 to any IPv4 address, public or private, so code can reach other HTTPS endpoints in the VPC, including other tasks. Security groups do not govern loopback (code can call the API on 127.0.0.1:8080) or link-local addresses: the ECS task metadata and credential endpoint (169.254.170.2) and the VPC DNS resolver stay reachable. Fargate does not provide the EC2 instance metadata service (IMDS) to tasks. |
 | Read-only root filesystem | task definition | Code cannot modify the image contents. Writable paths are `/workspace` and `/tmp` only. |
 | Capabilities: Fargate defaults dropped except `SETUID`, `SETGID` and `KILL` | task definition | The API process needs these three to start code workers under another UID and to kill them on timeout. Fargate accepts only `SYS_PTRACE` as an added capability, so the task definition adds nothing and drops the other 11 defaults. A test asserts the remaining set. |
 | Workers start with no capabilities | `service/executor.py` | A change between two nonzero UIDs keeps capabilities, so workers are started through `setpriv`, which clears the inheritable and ambient sets before Python runs. The container test asserts `CapInh`, `CapPrm`, `CapEff` and `CapAmb` are 0 in a worker and that `os.setuid(0)` fails. |
