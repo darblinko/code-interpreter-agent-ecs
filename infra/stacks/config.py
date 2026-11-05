@@ -47,7 +47,7 @@ class Config:
             certificate_arn=str(get("certificate_arn", "")),
             public_ingress_cidr=str(get("public_ingress_cidr", "")),
             destroy_on_delete=_as_bool(get("destroy_on_delete", False)),
-            monthly_budget_usd=float(get("monthly_budget_usd", 50)),
+            monthly_budget_usd=float(get("monthly_budget_usd", 100)),
             notification_email=str(get("notification_email", "")),
         )
         config.validate()

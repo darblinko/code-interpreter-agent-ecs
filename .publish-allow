@@ -1,0 +1,2 @@
+secret-anthropic tests/test_container_isolation.py the KEY constant is a fake key injected into the test container; the tests assert model code cannot read it
+aws-account-id tests/test_infra.py 111111111111 is a placeholder account in a fake ACM certificate ARN used only for offline CDK synthesis
