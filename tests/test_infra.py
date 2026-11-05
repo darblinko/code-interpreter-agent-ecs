@@ -55,8 +55,9 @@ def test_no_wildcard_iam_resources(service, secrets):
             if statement.get("Effect") != "Allow":
                 continue
             actions = set(as_list(statement["Action"]))
-            assert "*" not in actions and not any(a.endswith(":*") for a in actions), statement
-            if "*" in as_list(statement["Resource"]):
+            assert not any("*" in a for a in actions), statement
+            # Any "*" in the resource, including inside an ARN built with Fn::Join.
+            if "*" in json.dumps(statement["Resource"]):
                 assert actions <= WILDCARD_ALLOWED_ACTIONS, statement
 
 
@@ -70,7 +71,13 @@ def test_task_role_has_no_permissions(service):
     for policy in service.find_resources("AWS::IAM::Policy").values():
         refs = json.dumps(policy["Properties"]["Roles"])
         assert task_role_id not in refs
-    assert "Policies" not in next(iter(roles.values()))["Properties"]
+    properties = next(iter(roles.values()))["Properties"]
+    assert "Policies" not in properties and "ManagedPolicyArns" not in properties
+    assert properties["AssumeRolePolicyDocument"]["Statement"] == [
+        {"Action": "sts:AssumeRole", "Effect": "Allow", "Principal": {"Service": "ecs-tasks.amazonaws.com"}}
+    ]
+    for resource_type in ("AWS::IAM::ManagedPolicy", "AWS::IAM::InstanceProfile"):
+        assert task_role_id not in json.dumps(service.find_resources(resource_type))
 
 
 def test_no_public_ingress_by_default(service):
@@ -136,7 +143,13 @@ def test_secret_access_is_scoped_to_one_arn(service):
         if "secretsmanager:GetSecretValue" in as_list(s["Action"])
     ]
     assert len(reads) == 1
-    assert reads[0]["Resource"] != "*"
+    # Exactly the secret exported by the secrets stack, by its full ARN.
+    resource = reads[0]["Resource"]
+    assert list(resource) == ["Fn::ImportValue"], resource
+    assert resource["Fn::ImportValue"].startswith("CodeInterpreterAgentSecrets:ExportsOutputRefApiKeys")
+    assert set(as_list(reads[0]["Action"])) == {
+        "secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret",
+    }  # fmt: skip
 
 
 def test_log_retention_14_days(service):
