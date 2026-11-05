@@ -43,8 +43,10 @@ Event types: `text_delta`, `tool_call`, `tool_result`, `final` (`stop_reason`, `
 | `CIA_PROVIDER` | `anthropic` | `anthropic`, `openai`, or `fake` (test provider, no key; never for real traffic) |
 | `CIA_MODEL` | provider default | Model id |
 | `SERVICE_API_TOKEN` | unset | If set, `/v1/run` requires `Authorization: Bearer <token>`. `/health` stays open. Enable with `-c api_token_enabled=true` and add the field to the secret. |
+| `AUTH_REQUIRED` | unset | Set to `true` by the stack when `api_token_enabled=true`. A missing or empty `SERVICE_API_TOKEN` then keeps the service not ready (503) instead of leaving `/v1/run` open. |
 | `MAX_BODY_BYTES` / `MAX_MESSAGE_CHARS` | 65536 / 20000 | Request size limits |
-| `RATE_LIMIT_PER_MINUTE` | 30 | Per client address (last `X-Forwarded-For` entry, else peer), per task |
+| `RATE_LIMIT_PER_MINUTE` | 30 | Per client address, per task. The address is the last `X-Forwarded-For` entry when the peer is in `TRUSTED_PROXY_CIDRS`, otherwise the peer address. |
+| `TRUSTED_PROXY_CIDRS` | unset | Comma-separated networks whose `X-Forwarded-For` header is used. The stack sets the VPC CIDR, where the ALB runs. |
 | `MAX_CONCURRENT_RUNS` | 4 | Simultaneous runs per task |
 | `MAX_ITERATIONS` / `MAX_TOTAL_TOKENS` | 8 / 100000 | Budget per request. Tokens are checked before each model call. |
 | `EXEC_TIMEOUT_S` / `EXEC_MEMORY_MB` | 30 / 1024 | Per code execution |

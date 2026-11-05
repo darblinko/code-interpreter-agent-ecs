@@ -223,8 +223,17 @@ def test_cdk_json_defaults_are_cheapest_safe():
 def test_api_token_injected_only_when_enabled(synth):
     template = synth(api_token_enabled=True)["CodeInterpreterAgentService"]
     assert "SERVICE_API_TOKEN" in {s["Name"] for s in container(template)["Secrets"]}
+    environment = {e["Name"]: e["Value"] for e in container(template)["Environment"]}
+    assert environment["AUTH_REQUIRED"] == "true"
     default = synth()["CodeInterpreterAgentService"]
     assert "SERVICE_API_TOKEN" not in {s["Name"] for s in container(default)["Secrets"]}
+    assert "AUTH_REQUIRED" not in {e["Name"] for e in container(default)["Environment"]}
+
+
+def test_forwarded_for_trusted_only_from_the_vpc(service):
+    environment = {e["Name"]: e["Value"] for e in container(service)["Environment"]}
+    value = environment["TRUSTED_PROXY_CIDRS"]["Fn::GetAtt"]
+    assert value[0].startswith("Vpc") and value[1] == "CidrBlock"
 
 
 def test_task_does_not_force_a_user_or_extra_privileges(service):

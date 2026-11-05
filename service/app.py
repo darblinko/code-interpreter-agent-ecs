@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import os
 import threading
@@ -80,6 +81,9 @@ def create_app(
 
     @app.on_event("startup")
     def start() -> None:
+        if settings.auth_required and not settings.api_token:
+            state["not_ready"] = "AUTH_REQUIRED is set but SERVICE_API_TOKEN is missing or empty"
+            return
         try:
             state["agent"] = (agent_factory or build_service_agent)(settings)
             state["not_ready"] = ""
@@ -102,13 +106,27 @@ def create_app(
             return True
         header = request.headers.get("authorization", "")
         scheme, _, token = header.partition(" ")
-        return scheme.lower() == "bearer" and hmac.compare_digest(token, settings.api_token)
+        # Bytes, because compare_digest rejects str with non-ASCII characters.
+        return scheme.lower() == "bearer" and hmac.compare_digest(
+            token.encode(), settings.api_token.encode()
+        )
 
     def client_key(request: Request) -> str:
+        """The ALB appends the client address as the last X-Forwarded-For entry. The header is
+        used only from trusted proxies; any other peer, including code calling the service on
+        localhost, is keyed by its own address."""
+        peer = request.client.host if request.client else ""
         forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
+        if forwarded and is_trusted_proxy(peer):
             return forwarded.split(",")[-1].strip()
-        return request.client.host if request.client else "unknown"
+        return peer or "unknown"
+
+    def is_trusted_proxy(peer: str) -> bool:
+        try:
+            address = ipaddress.ip_address(peer)
+        except ValueError:
+            return False
+        return any(address in network for network in settings.trusted_proxies)
 
     async def read_request(request: Request) -> RunRequest | JSONResponse:
         length = request.headers.get("content-length")

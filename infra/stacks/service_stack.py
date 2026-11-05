@@ -125,7 +125,7 @@ class ServiceStack(cdk.Stack):
             stop_timeout=cdk.Duration.seconds(30),
             logging=ecs.LogDrivers.aws_logs(stream_prefix="app", log_group=log_group),
             secrets=self._container_secrets(secret),
-            environment={"WORKSPACE_ROOT": "/workspace"},
+            environment=self._container_environment(),
             health_check=ecs.HealthCheck(
                 command=[
                     "CMD-SHELL",
@@ -166,6 +166,16 @@ class ServiceStack(cdk.Stack):
             ),
         )
         return ecs.ContainerImage.from_docker_image_asset(asset)
+
+    def _container_environment(self) -> dict[str, str]:
+        environment = {
+            "WORKSPACE_ROOT": "/workspace",
+            # The ALB is the only peer whose X-Forwarded-For header the service uses.
+            "TRUSTED_PROXY_CIDRS": self.vpc.vpc_cidr_block,
+        }
+        if self.config.api_token_enabled:
+            environment["AUTH_REQUIRED"] = "true"
+        return environment
 
     def _container_secrets(self, secret: secretsmanager.ISecret) -> dict[str, ecs.Secret]:
         fields = ["ANTHROPIC_API_KEY"]

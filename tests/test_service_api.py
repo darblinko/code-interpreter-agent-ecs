@@ -1,6 +1,7 @@
 """API tests. Offline: FakeProvider plus the real subprocess executor."""
 
 import dataclasses
+import ipaddress
 import json
 import os
 import threading
@@ -21,7 +22,7 @@ BASE = Settings(
 )  # fmt: skip
 
 
-def make_client(tmp_path, script, **overrides):
+def make_client(tmp_path, script, peer=("testclient", 50000), **overrides):
     settings = dataclasses.replace(BASE, workspace_root=str(tmp_path), **overrides)
 
     def factory(settings):
@@ -31,7 +32,7 @@ def make_client(tmp_path, script, **overrides):
             max_total_tokens=settings.max_total_tokens,
         )  # fmt: skip
 
-    return TestClient(create_app(settings, factory))
+    return TestClient(create_app(settings, factory), client=peer)
 
 
 def body(message="hi", session="s1"):
@@ -180,3 +181,40 @@ def test_unwritable_workspace_root_fails_readiness(tmp_path):
     if os.geteuid() != 0:
         with pytest.raises(ValueError, match="not a writable directory"):
             check_workspace_root(str(locked))
+
+
+def test_auth_required_with_empty_token_fails_closed(tmp_path):
+    with make_client(tmp_path, [text_turn("ok")], auth_required=True, api_token=None) as client:
+        health = client.get("/health")
+        assert health.status_code == 503
+        assert "SERVICE_API_TOKEN" in health.json()["error"]
+        assert client.post("/v1/run", json=body()).status_code == 503
+
+
+def test_non_ascii_bearer_token_is_401(tmp_path):
+    with make_client(tmp_path, [text_turn("ok")], api_token="s3cret") as client:
+        headers = [(b"authorization", b"Bearer s3cr\xe9t")]
+        response = client.post("/v1/run", json=body(), headers=headers)
+    assert response.status_code == 401
+
+
+def test_forwarded_for_is_ignored_from_untrusted_peers(tmp_path):
+    script = [text_turn("a"), text_turn("b")]
+    with make_client(tmp_path, script, rate_limit_per_minute=1) as client:
+        first = {"X-Forwarded-For": "198.51.100.1"}
+        second = {"X-Forwarded-For": "198.51.100.2"}
+        assert client.post("/v1/run", json=body(), headers=first).status_code == 200
+        assert client.post("/v1/run", json=body(), headers=second).status_code == 429
+
+
+def test_forwarded_for_is_used_from_trusted_proxies(tmp_path):
+    script = [text_turn("a"), text_turn("b")]
+    overrides = {
+        "rate_limit_per_minute": 1,
+        "trusted_proxies": (ipaddress.ip_network("10.0.0.0/16"),),
+        "peer": ("10.0.1.20", 50000),
+    }
+    with make_client(tmp_path, script, **overrides) as client:
+        for address in ("198.51.100.1", "198.51.100.2"):
+            headers = {"X-Forwarded-For": f"10.9.9.9, {address}"}
+            assert client.post("/v1/run", json=body(), headers=headers).status_code == 200
