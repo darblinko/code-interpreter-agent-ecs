@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 
 from fastapi import FastAPI, Request
@@ -110,12 +111,17 @@ def create_app(
     limiter = RateLimiter(settings.rate_limit_per_minute)
     run_slots = threading.BoundedSemaphore(settings.max_concurrent_runs)
     active_sessions: set[str] = set()
+    # Known sessions, least recently used first. Each holds an interpreter, files and history.
+    known_sessions: OrderedDict[str, None] = OrderedDict()
     sessions_lock = threading.Lock()
 
     @app.on_event("startup")
     def start() -> None:
         if settings.auth_required and not settings.api_token:
             state["not_ready"] = "AUTH_REQUIRED is set but SERVICE_API_TOKEN is missing or empty"
+            return
+        if settings.memory_problem():
+            state["not_ready"] = settings.memory_problem()
             return
         try:
             state["agent"] = (agent_factory or build_service_agent)(settings)
@@ -185,6 +191,33 @@ def create_app(
             return _error(413, f"message exceeds {settings.max_message_chars} characters")
         return parsed
 
+    def admit_session(session_id: str) -> tuple[JSONResponse | None, str | None]:
+        """Mark the session active. A new session beyond MAX_SESSIONS replaces the least
+        recently used idle one, which stays marked active until evict_session finishes."""
+        with sessions_lock:
+            if session_id in active_sessions:
+                return _error(409, "A run for this session is already in progress"), None
+            evicted = None
+            if session_id not in known_sessions and len(known_sessions) >= settings.max_sessions:
+                evicted = next((s for s in known_sessions if s not in active_sessions), None)
+                if evicted is None:
+                    return _error(503, "Session limit reached and all sessions are busy"), None
+                del known_sessions[evicted]
+                active_sessions.add(evicted)
+            known_sessions[session_id] = None
+            known_sessions.move_to_end(session_id)
+            active_sessions.add(session_id)
+            return None, evicted
+
+    def evict_session(session_id: str) -> None:
+        """Stop the session's interpreter and delete its files and history. The empty
+        workspace directory stays, because the executor reuses it if the id returns."""
+        try:
+            state["agent"].reset(session_id)
+        finally:
+            with sessions_lock:
+                active_sessions.discard(session_id)
+
     def events_for(parsed: RunRequest) -> Iterator[dict]:
         for event in state["agent"].run(parsed.session_id, parsed.message):
             yield event_to_dict(event)
@@ -235,12 +268,16 @@ def create_app(
             return parsed
         if not run_slots.acquire(blocking=False):
             return _error(503, "Too many concurrent runs")
-        with sessions_lock:
-            busy = parsed.session_id in active_sessions
-            active_sessions.add(parsed.session_id)
-        if busy:
+        admitted, evicted = admit_session(parsed.session_id)
+        if admitted is not None:
             run_slots.release()
-            return _error(409, "A run for this session is already in progress")
+            return admitted
+        if evicted is not None:
+            try:
+                await run_in_threadpool(evict_session, evicted)
+            except Exception as error:
+                release(parsed.session_id)
+                return _error(500, f"Could not evict an idle session: {error}")
         if "text/event-stream" in request.headers.get("accept", ""):
             reservation = Reservation(lambda: release(parsed.session_id))
             return ReleasingStreamingResponse(sse_stream(parsed, reservation), reservation)

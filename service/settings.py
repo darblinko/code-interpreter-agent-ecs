@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+API_RESERVE_MB = 256  # API process, response buffers and the Python runtime
 
 
 def _bool(name: str) -> bool:
@@ -44,6 +45,22 @@ class Settings:
     auth_required: bool = False
     # Peers whose X-Forwarded-For header is used for rate limiting (the ALB subnets).
     trusted_proxies: tuple[Network, ...] = ()
+    # Each session keeps one interpreter process, so this also caps the worker count.
+    max_sessions: int = 3
+    # Set by the deployment. When set, max_sessions * exec_memory_mb + API_RESERVE_MB must fit.
+    task_memory_mib: int | None = None
+
+    def memory_problem(self) -> str:
+        """Empty when the session and execution limits fit the task memory."""
+        if self.task_memory_mib is None:
+            return ""
+        needed = self.max_sessions * self.exec_memory_mb + API_RESERVE_MB
+        if needed <= self.task_memory_mib:
+            return ""
+        return (
+            f"MAX_SESSIONS ({self.max_sessions}) x EXEC_MEMORY_MB ({self.exec_memory_mb}) "
+            f"+ {API_RESERVE_MB} MiB for the API exceeds TASK_MEMORY_MIB ({self.task_memory_mib})"
+        )
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -59,11 +76,13 @@ class Settings:
             max_body_bytes=_int("MAX_BODY_BYTES", 65_536),
             max_message_chars=_int("MAX_MESSAGE_CHARS", 20_000),
             rate_limit_per_minute=_int("RATE_LIMIT_PER_MINUTE", 30),
-            max_concurrent_runs=_int("MAX_CONCURRENT_RUNS", 4),
+            max_concurrent_runs=_int("MAX_CONCURRENT_RUNS", 2),
             max_iterations=_int("MAX_ITERATIONS", 8),
             max_total_tokens=_int("MAX_TOTAL_TOKENS", 100_000),
             exec_timeout_s=float(os.environ.get("EXEC_TIMEOUT_S", "30")),
-            exec_memory_mb=_int("EXEC_MEMORY_MB", 1024),
+            exec_memory_mb=_int("EXEC_MEMORY_MB", 256),
             auth_required=_bool("AUTH_REQUIRED"),
             trusted_proxies=_networks("TRUSTED_PROXY_CIDRS"),
+            max_sessions=_int("MAX_SESSIONS", 3),
+            task_memory_mib=_int("TASK_MEMORY_MIB", 0) or None,
         )

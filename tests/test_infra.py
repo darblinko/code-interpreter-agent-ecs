@@ -241,3 +241,12 @@ def test_task_does_not_force_a_user_or_extra_privileges(service):
     assert definition.get("Privileged") in (None, False)
     assert "User" not in definition
     assert "SYS_ADMIN" not in str(definition["LinuxParameters"])
+
+
+@pytest.mark.parametrize(("memory_mib", "sessions"), [(1024, "3"), (2048, "7")])
+def test_session_count_fits_the_task_memory(synth, memory_mib, sessions):
+    template = synth(memory_mib=memory_mib, cpu=1024)["CodeInterpreterAgentService"]
+    environment = {e["Name"]: e["Value"] for e in container(template)["Environment"]}
+    assert environment["TASK_MEMORY_MIB"] == str(memory_mib)
+    assert environment["EXEC_MEMORY_MB"] == "256"
+    assert environment["MAX_SESSIONS"] == sessions

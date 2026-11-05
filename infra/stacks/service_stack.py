@@ -21,6 +21,8 @@ from .config import Config
 SERVICE_STACK_NAME = "CodeInterpreterAgentService"
 CONTAINER_PORT = 8080
 REPO_ROOT = Path(__file__).resolve().parents[2]
+EXEC_MEMORY_MB = 256
+API_RESERVE_MB = 256  # same reserve as service/settings.py
 # The Fargate default capability set minus SETUID, SETGID and KILL.
 DROPPED_CAPABILITIES = (
     ecs.Capability.AUDIT_WRITE,
@@ -172,6 +174,11 @@ class ServiceStack(cdk.Stack):
             "WORKSPACE_ROOT": "/workspace",
             # The ALB is the only peer whose X-Forwarded-For header the service uses.
             "TRUSTED_PROXY_CIDRS": self.vpc.vpc_cidr_block,
+            # Every session keeps one worker limited to EXEC_MEMORY_MB of address space, so the
+            # session count is what fits the task after the API's reserve.
+            "TASK_MEMORY_MIB": str(self.config.memory_mib),
+            "EXEC_MEMORY_MB": str(EXEC_MEMORY_MB),
+            "MAX_SESSIONS": str(max(1, (self.config.memory_mib - API_RESERVE_MB) // EXEC_MEMORY_MB)),
         }
         if self.config.api_token_enabled:
             environment["AUTH_REQUIRED"] = "true"

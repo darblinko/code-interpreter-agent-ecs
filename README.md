@@ -47,9 +47,11 @@ Event types: `text_delta`, `tool_call`, `tool_result`, `final` (`stop_reason`, `
 | `MAX_BODY_BYTES` / `MAX_MESSAGE_CHARS` | 65536 / 20000 | Request size limits |
 | `RATE_LIMIT_PER_MINUTE` | 30 | Per client address, per task. The address is the last `X-Forwarded-For` entry when the peer is in `TRUSTED_PROXY_CIDRS`, otherwise the peer address. |
 | `TRUSTED_PROXY_CIDRS` | unset | Comma-separated networks whose `X-Forwarded-For` header is used. The stack sets the VPC CIDR, where the ALB runs. |
-| `MAX_CONCURRENT_RUNS` | 4 | Simultaneous runs per task |
+| `MAX_CONCURRENT_RUNS` | 2 | Simultaneous runs per task |
+| `MAX_SESSIONS` | 3 | Sessions kept per task. Each keeps one interpreter process, its files and its history. A new session beyond the limit deletes the least recently used idle one; if all are busy the request gets 503. The stack sets `(memory_mib - 256) / 256`, which is 3 for 1024 MiB. |
+| `TASK_MEMORY_MIB` | unset | Set by the stack. When set, `MAX_SESSIONS x EXEC_MEMORY_MB + 256` must not exceed it, or the service stays not ready (503). |
 | `MAX_ITERATIONS` / `MAX_TOTAL_TOKENS` | 8 / 100000 | Budget per request. Tokens are checked before each model call. |
-| `EXEC_TIMEOUT_S` / `EXEC_MEMORY_MB` | 30 / 1024 | Per code execution |
+| `EXEC_TIMEOUT_S` / `EXEC_MEMORY_MB` | 30 / 256 | Per code execution. The memory value is the worker's address space limit (`RLIMIT_AS`). |
 
 Default access control is network only (internal ALB). Rate limits and concurrency are per task and in memory.
 

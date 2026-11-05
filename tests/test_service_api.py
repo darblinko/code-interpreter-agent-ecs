@@ -266,3 +266,49 @@ def test_chunked_body_over_the_limit_is_rejected(tmp_path):
     with make_client(tmp_path, []) as client:
         response = client.post("/v1/run", content=chunks())
     assert response.status_code == 413
+
+
+def test_session_beyond_the_limit_evicts_the_least_recently_used(tmp_path):
+    script = [
+        code_turn("x = 1; open('a.txt', 'w').write('A')"), text_turn("one"),
+        code_turn("print(1)"), text_turn("two"),
+        code_turn("print(1)"), text_turn("three"),
+        code_turn("print('x' in globals())"), text_turn("four"),
+    ]  # fmt: skip
+    with make_client(tmp_path, script, max_sessions=2) as client:
+        for session in ("alpha", "beta", "gamma"):
+            assert client.post("/v1/run", json=body(session=session)).status_code == 200
+        assert list((tmp_path / "alpha").iterdir()) == []
+        assert (tmp_path / "beta").exists() and (tmp_path / "gamma").exists()
+        events = client.post("/v1/run", json=body(session="alpha")).json()["events"]
+    output = next(e["content"] for e in events if e["type"] == "tool_result")
+    assert "False" in output
+
+
+def test_session_limit_with_all_sessions_busy_is_503(tmp_path):
+    started, release = threading.Event(), threading.Event()
+
+    def slow_turn(messages):
+        started.set()
+        release.wait(10)
+        return text_turn("late")
+
+    with make_client(tmp_path, [slow_turn], max_sessions=1) as client:
+        worker = threading.Thread(target=lambda: client.post("/v1/run", json=body()))
+        worker.start()
+        assert started.wait(10)
+        response = client.post("/v1/run", json=body(session="other"))
+        release.set()
+        worker.join(10)
+    assert response.status_code == 503
+    assert "Session limit" in response.json()["error"]
+
+
+def test_limits_that_do_not_fit_the_task_memory_fail_readiness(tmp_path):
+    overrides = {"task_memory_mib": 1024, "max_sessions": 4, "exec_memory_mb": 256}
+    with make_client(tmp_path, [], **overrides) as client:
+        health = client.get("/health")
+    assert health.status_code == 503
+    assert "TASK_MEMORY_MIB" in health.json()["error"]
+    fits = dataclasses.replace(BASE, **{**overrides, "max_sessions": 3})
+    assert fits.memory_problem() == ""
