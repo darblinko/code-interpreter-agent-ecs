@@ -61,6 +61,39 @@ def build_service_agent(settings: Settings) -> Agent:
     )
 
 
+class Reservation:
+    """A run slot and session lock held by one streaming response, released exactly once."""
+
+    def __init__(self, release: Callable[[], None]) -> None:
+        self._release = release
+        self._lock = threading.Lock()
+        self._closed = False
+        self.started = False
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._release()
+
+
+class ReleasingStreamingResponse(StreamingResponse):
+    """If the client disconnects before the body iterator starts, the iterator's own cleanup
+    never runs, so the response releases the reservation itself when it ends."""
+
+    def __init__(self, content: Iterator[str], reservation: Reservation) -> None:
+        super().__init__(content, media_type="text/event-stream")
+        self.reservation = reservation
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if not self.reservation.started:
+                self.reservation.close()
+
+
 def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
@@ -132,9 +165,14 @@ def create_app(
         length = request.headers.get("content-length")
         if length and length.isdigit() and int(length) > settings.max_body_bytes:
             return _error(413, f"Body exceeds {settings.max_body_bytes} bytes")
-        body = await request.body()
-        if len(body) > settings.max_body_bytes:
-            return _error(413, f"Body exceeds {settings.max_body_bytes} bytes")
+        # Counted while streaming: a chunked request has no Content-Length to check up front.
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > settings.max_body_bytes:
+                return _error(413, f"Body exceeds {settings.max_body_bytes} bytes")
+            chunks.append(chunk)
+        body = b"".join(chunks)
         try:
             parsed = RunRequest.model_validate_json(body)
         except ValidationError as error:
@@ -156,14 +194,15 @@ def create_app(
             active_sessions.discard(session_id)
         run_slots.release()
 
-    def sse_stream(parsed: RunRequest) -> Iterator[str]:
+    def sse_stream(parsed: RunRequest, reservation: Reservation) -> Iterator[str]:
+        reservation.started = True
         try:
             for item in events_for(parsed):
                 yield f"event: {item['type']}\ndata: {json.dumps(item)}\n\n"
         except Exception as error:
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': str(error)})}\n\n"
         finally:
-            release(parsed.session_id)
+            reservation.close()
 
     def json_run(parsed: RunRequest) -> JSONResponse:
         try:
@@ -203,7 +242,8 @@ def create_app(
             run_slots.release()
             return _error(409, "A run for this session is already in progress")
         if "text/event-stream" in request.headers.get("accept", ""):
-            return StreamingResponse(sse_stream(parsed), media_type="text/event-stream")
+            reservation = Reservation(lambda: release(parsed.session_id))
+            return ReleasingStreamingResponse(sse_stream(parsed, reservation), reservation)
         return await run_in_threadpool(json_run, parsed)
 
     return app

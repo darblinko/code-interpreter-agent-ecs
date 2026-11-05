@@ -1,5 +1,7 @@
 """API tests. Offline: FakeProvider plus the real subprocess executor."""
 
+import asyncio
+import contextlib
 import dataclasses
 import ipaddress
 import json
@@ -218,3 +220,49 @@ def test_forwarded_for_is_used_from_trusted_proxies(tmp_path):
         for address in ("198.51.100.1", "198.51.100.2"):
             headers = {"X-Forwarded-For": f"10.9.9.9, {address}"}
             assert client.post("/v1/run", json=body(), headers=headers).status_code == 200
+
+
+def call_asgi(app, payload, send):
+    """Drive one request through the ASGI app with a caller-supplied send."""
+    data = json.dumps(payload).encode()
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/v1/run",
+        "raw_path": b"/v1/run", "query_string": b"", "root_path": "",
+        "client": ("127.0.0.1", 1), "server": ("testserver", 80),
+        "headers": [
+            (b"content-type", b"application/json"), (b"accept", b"text/event-stream"),
+            (b"content-length", str(len(data)).encode()),
+        ],
+    }  # fmt: skip
+    messages = [{"type": "http.request", "body": data, "more_body": False}]
+
+    async def receive():
+        return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+    async def run():
+        with contextlib.suppress(Exception):
+            await app(scope, receive, send)
+
+    asyncio.run(run())
+
+
+def test_sse_slot_is_released_when_client_disconnects_before_streaming(tmp_path):
+    async def send(message):
+        if message["type"] == "http.response.start":
+            raise OSError("client went away")
+
+    script = [text_turn("a"), text_turn("b")]
+    with make_client(tmp_path, script, max_concurrent_runs=1) as client:
+        call_asgi(client.app, body(), send)
+        assert client.post("/v1/run", json=body()).status_code == 200
+
+
+def test_chunked_body_over_the_limit_is_rejected(tmp_path):
+    def chunks():
+        for _ in range(10):
+            yield b"x" * 1000
+
+    with make_client(tmp_path, []) as client:
+        response = client.post("/v1/run", content=chunks())
+    assert response.status_code == 413
