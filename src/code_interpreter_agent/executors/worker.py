@@ -4,7 +4,8 @@ docker executor can mount this single file into a stock Python image.
 Protocol: one JSON object per line on stdin and stdout.
     worker -> parent   {"ready": true}
     parent -> worker   {"code": str, "cpu_s": number}
-    worker -> parent   {"stdout": str, "stderr": str, "ok": bool}
+    worker -> parent   {"stdout": str, "stderr": str, "ok": bool,
+                        "stdout_dropped": int, "stderr_dropped": int}
 After startup, file descriptors 0, 1 and 2 point at /dev/null, so user code cannot corrupt the
 protocol by printing; print output is captured in-process.
 """
@@ -161,10 +162,29 @@ def _run_source(code: str, filename: str, namespace: dict) -> None:
             print(repr(value))
 
 
-def execute(code: str, namespace: dict, cell_number: int) -> dict:
+class BoundedText(io.StringIO):
+    """Capture buffer that keeps the first `limit` characters and counts the rest, so large
+    output cannot grow the worker's memory or the protocol line without bound."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__()
+        self.limit = limit
+        self.dropped = 0
+
+    def write(self, text: str) -> int:
+        room = max(0, self.limit - self.tell())
+        if room:
+            super().write(text[:room])
+        self.dropped += max(0, len(text) - room)
+        return len(text)
+
+
+def execute(
+    code: str, namespace: dict, cell_number: int, max_output_chars: int = 100_000
+) -> dict:
     filename = f"<cell {cell_number}>"
     linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
-    out, err = io.StringIO(), io.StringIO()
+    out, err = BoundedText(max_output_chars), BoundedText(max_output_chars)
     ok = True
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -175,7 +195,13 @@ def execute(code: str, namespace: dict, cell_number: int) -> dict:
             while frame is not None and not frame.tb_frame.f_code.co_filename.startswith("<cell"):
                 frame = frame.tb_next
             traceback.print_exception(type(error), error, frame, file=err)
-    return {"stdout": out.getvalue(), "stderr": err.getvalue(), "ok": ok}
+    return {
+        "stdout": out.getvalue(),
+        "stderr": err.getvalue(),
+        "ok": ok,
+        "stdout_dropped": out.dropped,
+        "stderr_dropped": err.dropped,
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -183,6 +209,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--memory-mb", type=int, default=0)
     parser.add_argument("--no-confine", action="store_true")
+    parser.add_argument("--max-output-chars", type=int, default=100_000)
     args = parser.parse_args(argv)
 
     protocol_in = os.fdopen(os.dup(0), "r", encoding="utf-8")
@@ -203,7 +230,7 @@ def main(argv: list[str] | None = None) -> None:
     for cell_number, line in enumerate(protocol_in, start=1):
         request = json.loads(line)
         set_cpu_budget(float(request.get("cpu_s", 30)))
-        response = execute(request["code"], namespace, cell_number)
+        response = execute(request["code"], namespace, cell_number, args.max_output_chars)
         protocol_out.write(json.dumps(response) + "\n")
         protocol_out.flush()
 

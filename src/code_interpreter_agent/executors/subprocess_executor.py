@@ -41,6 +41,8 @@ class SubprocessExecutor(WorkerExecutor):
             str(workspace),
             "--memory-mb",
             str(self.memory_mb),
+            "--max-output-chars",
+            str(self.max_output_chars),
         ]
         return subprocess.Popen(
             command,

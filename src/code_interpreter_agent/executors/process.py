@@ -18,6 +18,11 @@ from .base import ExecResult, validate_session_id
 
 Snapshot = dict[str, tuple[int, int]]
 EOF = ""  # a real protocol line always ends in a newline, so "" is a safe end marker
+OVERSIZE = "\0"  # marks a protocol line longer than MAX_PROTOCOL_LINE
+# The worker bounds its captured output; this bounds what the parent reads even if code in the
+# worker writes to the protocol descriptor directly.
+MAX_PROTOCOL_LINE = 2_000_000
+QUEUED_LINES = 4
 
 
 @dataclass
@@ -26,6 +31,7 @@ class _Session:
     lock: threading.Lock = field(default_factory=threading.Lock)
     process: subprocess.Popen | None = None
     lines: queue.Queue | None = None
+    reader: threading.Thread | None = None
 
 
 def snapshot_workspace(workspace: Path) -> Snapshot:
@@ -44,10 +50,11 @@ def changed_files(before: Snapshot, after: Snapshot) -> tuple[str, ...]:
     return tuple(sorted(name for name, meta in after.items() if before.get(name) != meta))
 
 
-def truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
+def truncate(text: str, limit: int, dropped: int = 0) -> str:
+    """`dropped` counts characters the worker already discarded before sending."""
+    if len(text) <= limit and not dropped:
         return text
-    omitted = len(text) - limit
+    omitted = max(0, len(text) - limit) + dropped
     return text[:limit] + f"\n... [{omitted} characters truncated]"
 
 
@@ -107,8 +114,8 @@ class WorkerExecutor(ABC):
             result = self._run_locked(session_id, session, code)
             files = changed_files(before, snapshot_workspace(session.workspace))
         return ExecResult(
-            stdout=truncate(result["stdout"], self.max_output_chars),
-            stderr=truncate(result["stderr"], self.max_output_chars),
+            stdout=truncate(result["stdout"], self.max_output_chars, result.get("stdout_dropped", 0)),
+            stderr=truncate(result["stderr"], self.max_output_chars, result.get("stderr_dropped", 0)),
             ok=result["ok"],
             files=files,
             duration_s=round(time.monotonic() - started, 3),
@@ -131,16 +138,20 @@ class WorkerExecutor(ABC):
             return self._discard(session_id, session, limit)
         if reply == EOF:
             return self._discard(session_id, session, None)
+        if reply == OVERSIZE:
+            limit = f"Worker output exceeded the {MAX_PROTOCOL_LINE} character protocol limit."
+            return self._discard(session_id, session, limit)
         return json.loads(reply)
 
     def _start(self, session_id: str, session: _Session) -> str:
         session.process = self._spawn(session_id, session.workspace)
-        session.lines = queue.Queue()
-        threading.Thread(
+        session.lines = queue.Queue(maxsize=QUEUED_LINES)
+        session.reader = threading.Thread(
             target=_pump, args=(session.process.stdout, session.lines), daemon=True
-        ).start()
+        )
+        session.reader.start()
         ready = self._read_line(session, self.startup_timeout_s)
-        if ready is None or ready == EOF:
+        if ready is None or ready in (EOF, OVERSIZE):
             return self._discard(session_id, session, "Worker failed to start.")["stderr"]
         return ""
 
@@ -153,11 +164,7 @@ class WorkerExecutor(ABC):
 
     def _discard(self, session_id: str, session: _Session, reason: str | None) -> dict:
         """Kill the worker and describe why. A reason of None means the worker died by itself."""
-        process = session.process
-        self._terminate(session_id, process)
-        status = process.wait()
-        session.process = None
-        session.lines = None
+        status = self._stop(session_id, session)
         if reason is None:
             reason = _describe_exit(status)
         return {
@@ -166,14 +173,23 @@ class WorkerExecutor(ABC):
             "ok": False,
         }
 
+    def _stop(self, session_id: str, session: _Session) -> int:
+        """Kill the worker, reap it and let its reader thread finish. Returns the exit status."""
+        process = session.process
+        self._terminate(session_id, process)
+        status = process.wait()
+        if session.lines is not None and session.reader is not None:
+            _drain(session.lines, session.reader)
+        session.process = None
+        session.lines = None
+        session.reader = None
+        return status
+
     def reset(self, session_id: str) -> None:
         session = self._session(session_id)
         with session.lock:
             if session.process is not None:
-                self._terminate(session_id, session.process)
-                session.process.wait()
-                session.process = None
-                session.lines = None
+                self._stop(session_id, session)
             shutil.rmtree(session.workspace, ignore_errors=True)
             session.workspace.mkdir(parents=True, exist_ok=True)
 
@@ -184,8 +200,7 @@ class WorkerExecutor(ABC):
         for session_id, session in sessions.items():
             with session.lock:
                 if session.process is not None:
-                    self._terminate(session_id, session.process)
-                    session.process.wait()
+                    self._stop(session_id, session)
         if self._owns_root:
             shutil.rmtree(self._root, ignore_errors=True)
 
@@ -197,9 +212,23 @@ class WorkerExecutor(ABC):
 
 
 def _pump(stream, lines: queue.Queue) -> None:
-    for line in stream:
+    while line := stream.readline(MAX_PROTOCOL_LINE):
+        if not line.endswith("\n"):
+            lines.put(OVERSIZE)
+            break
         lines.put(line)
     lines.put(EOF)
+
+
+def _drain(lines: queue.Queue, reader: threading.Thread, timeout_s: float = 5.0) -> None:
+    """Consume queued lines until the reader thread ends, so it is not left blocked on a full
+    queue after its worker is gone."""
+    deadline = time.monotonic() + timeout_s
+    while (reader.is_alive() or not lines.empty()) and time.monotonic() < deadline:
+        try:
+            lines.get(timeout=0.05)
+        except queue.Empty:
+            pass
 
 
 def _describe_exit(status: int) -> str:
