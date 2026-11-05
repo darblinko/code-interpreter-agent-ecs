@@ -86,7 +86,7 @@ The ALB is internal, so it answers only to callers inside the VPC. Options:
 
 1. AWS CloudShell in the VPC: in the console, open CloudShell, choose Actions, Create VPC environment, select the stack's VPC and a private subnet, then run `BASE_URL=<BaseUrl output> scripts/smoke.sh` after cloning this repository there. The ALB security group allows port 80 from the whole VPC CIDR.
 2. A bastion or an existing instance in the VPC.
-3. Public mode for a short test: redeploy with `public_https=true certificate_arn=<ACM arn> public_ingress_cidr=<your ip>/32`, and point a DNS name matching the certificate at the ALB. Remove it afterwards.
+3. Public mode for a short test: redeploy with `public_https=true certificate_arn=<ACM arn> public_ingress_cidr=<your ip>/32`, and point a DNS name matching the certificate at the `AlbDnsName` output (a CNAME or an alias record). Then run `BASE_URL=https://<that name> scripts/smoke.sh`; the script refuses to run in public mode without `BASE_URL`, because the ALB host name does not match the certificate. Remove it afterwards.
 
 The smoke script calls `GET /health` and one `POST /v1/run`. The body is configurable with `SMOKE_BODY` to match the application's request schema.
 

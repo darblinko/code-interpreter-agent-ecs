@@ -7,9 +7,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 resolve_region
 
+scheme="$(stack_output "$SERVICE_STACK" AlbScheme)"
+if [ "$scheme" = "internet-facing" ] && [ -z "${BASE_URL:-}" ]; then
+  die "Public mode: the certificate covers your domain, not the ALB host name. Point that domain at the AlbDnsName output and run BASE_URL=https://<your domain> scripts/smoke.sh"
+fi
 BASE_URL="${BASE_URL:-$(stack_output "$SERVICE_STACK" BaseUrl)}"
 [ -n "$BASE_URL" ] && [ "$BASE_URL" != "None" ] || die "No BASE_URL and no stack output found for $SERVICE_STACK."
-scheme="$(stack_output "$SERVICE_STACK" AlbScheme)"
 DEFAULT_BODY='{"session_id":"smoke","message":"Use the python tool to compute 6*7 and reply with the number only."}'
 SMOKE_BODY="${SMOKE_BODY:-$DEFAULT_BODY}"
 echo "Target: $BASE_URL"

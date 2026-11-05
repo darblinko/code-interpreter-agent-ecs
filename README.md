@@ -57,9 +57,9 @@ Default access control is network only (internal ALB). Rate limits and concurren
 
 ### Local run and tests
 
-    python -m venv .venv && .venv/bin/pip install -r service/requirements.txt pytest httpx
+    python3 -m venv .venv && .venv/bin/pip install -r infra/requirements-dev.txt -r service/requirements.txt
     CIA_PROVIDER=fake WORKSPACE_ROOT=/tmp/ws PYTHONPATH=.:src .venv/bin/python -m service
-    .venv/bin/python -m pytest                       # API, executor and infra tests, offline
+    .venv/bin/python -m pytest                       # API, executor, script and infra tests, offline
     CIA_CONTAINER_TESTS=1 .venv/bin/python -m pytest tests/test_container_isolation.py   # builds the image
 
 Without `SANDBOX_UID` and `SANDBOX_GID` the service uses the plain subprocess executor (no UID switch), which is the mode for local development only.
@@ -108,8 +108,8 @@ Defaults are in `infra/cdk.json`. Override with `key=value` arguments to `deploy
 | `egress_mode` | `nat` | `nat`: tasks in private subnets behind one NAT gateway. `public_ip`: tasks in public subnets with a public IP, no NAT (about $33 per month cheaper, see `docs/cost.md`). Inbound is blocked in both modes. |
 | `cpu_arch` | `arm64` | `arm64` or `x86_64`. ARM is about 20 percent cheaper; building it on an x86 host needs qemu emulation. |
 | `cpu`, `memory_mib` | 512, 1024 | Fargate task size |
-| `desired_count` | 1 | Task count |
-| `autoscaling`, `max_count` | false, 2 | CPU target tracking at 60 percent when enabled |
+| `desired_count` | 1 | Task count. Sessions are held in one task's memory; with more than one task the target group uses ALB cookie stickiness (1 hour), so clients must return the `AWSALB` cookie. A session is lost when its task stops. |
+| `autoscaling`, `max_count` | false, 2 | CPU target tracking at 60 percent when enabled. Enables cookie stickiness as for `desired_count` above 1. |
 | `openai_enabled` | false | Also inject `OPENAI_API_KEY`. The secret must then contain that field. |
 | `api_token_enabled` | false | Also inject `SERVICE_API_TOKEN`; `/v1/run` then requires that bearer token. The secret must contain the field. |
 | `public_https` | false | Internet-facing ALB with HTTPS. Requires `certificate_arn` (ACM) and `public_ingress_cidr`, a canonical IPv4 network such as `203.0.113.7/32`. Any `/0` and any CIDR with host bits set (`1.2.3.4/0`) are refused. |
@@ -138,4 +138,4 @@ The tests synthesize both stacks offline and assert on the CloudFormation templa
 
 ## License
 
-Apache-2.0 (the LICENSE file is added with the application code).
+Apache-2.0. See `LICENSE`.

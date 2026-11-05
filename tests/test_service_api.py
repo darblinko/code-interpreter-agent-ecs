@@ -175,9 +175,11 @@ def test_docs_are_not_exposed(tmp_path, path):
 def test_unwritable_workspace_root_fails_readiness(tmp_path):
     from service.app import check_workspace_root
 
-    check_workspace_root(str(tmp_path))
+    check_workspace_root(str(tmp_path / "created"))
+    assert (tmp_path / "created").is_dir()
+    (tmp_path / "file").write_text("")
     with pytest.raises(ValueError, match="not a writable directory"):
-        check_workspace_root(str(tmp_path / "missing"))
+        check_workspace_root(str(tmp_path / "file"))
     locked = tmp_path / "locked"
     locked.mkdir(mode=0o500)
     if os.geteuid() != 0:

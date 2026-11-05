@@ -248,6 +248,9 @@ class ServiceStack(cdk.Stack):
         else:
             listener = alb.add_listener("Http", port=80, open=False)
             scheme = "http"
+        # Sessions live in one task's memory. With more than one task, the ALB cookie keeps a
+        # client on the task that holds its sessions; clients must send the AWSALB cookie back.
+        multi_task = self.config.desired_count > 1 or self.config.autoscaling
         listener.add_targets(
             "Service",
             port=CONTAINER_PORT,
@@ -255,8 +258,12 @@ class ServiceStack(cdk.Stack):
             targets=[self.service],
             deregistration_delay=cdk.Duration.seconds(30),
             health_check=elbv2.HealthCheck(path="/health", healthy_http_codes="200"),
+            stickiness_cookie_duration=cdk.Duration.hours(1) if multi_task else None,
         )
+        # In public mode the certificate names your domain, not the ALB host name, so BaseUrl
+        # is the ALB name for reference and smoke.sh requires BASE_URL with your domain.
         cdk.CfnOutput(self, "BaseUrl", value=f"{scheme}://{alb.load_balancer_dns_name}")
+        cdk.CfnOutput(self, "AlbDnsName", value=alb.load_balancer_dns_name)
         cdk.CfnOutput(self, "AlbScheme", value="internet-facing" if public else "internal")
         return alb
 

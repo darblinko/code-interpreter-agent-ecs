@@ -250,3 +250,14 @@ def test_session_count_fits_the_task_memory(synth, memory_mib, sessions):
     assert environment["TASK_MEMORY_MIB"] == str(memory_mib)
     assert environment["EXEC_MEMORY_MB"] == "256"
     assert environment["MAX_SESSIONS"] == sessions
+
+
+def test_cookie_stickiness_only_with_more_than_one_task(service, synth):
+    def stickiness(template):
+        group = next(iter(template.find_resources("AWS::ElasticLoadBalancingV2::TargetGroup").values()))
+        attributes = group["Properties"].get("TargetGroupAttributes", [])
+        return {a["Key"]: a["Value"] for a in attributes}.get("stickiness.enabled")
+
+    assert stickiness(service) in (None, "false")
+    for overrides in ({"desired_count": 2}, {"autoscaling": True}):
+        assert stickiness(synth(**overrides)["CodeInterpreterAgentService"]) == "true"
