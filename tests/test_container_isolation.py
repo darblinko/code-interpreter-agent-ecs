@@ -1,10 +1,11 @@
-"""Builds the image and proves model code cannot read the API key.
+"""Builds the image and proves model code cannot read the API key or gain privileges.
 
 Opt in with CIA_CONTAINER_TESTS=1. Needs a Docker daemon and network access to PyPI at build
 time. The container runs with the same capability and filesystem settings as the ECS task
 definition. CIA_PROVIDER=fake lets /v1/run execute code without a model key.
 """
 
+import ast
 import json
 import os
 import shutil
@@ -14,9 +15,13 @@ import uuid
 from pathlib import Path
 
 import pytest
+from stacks.service_stack import DROPPED_CAPABILITIES
 
 REPO = Path(__file__).resolve().parents[1]
 KEY = "sk-ant-TEST-SENTINEL-0123456789"
+EXEC_TIMEOUT_S = 3
+# The task definition drops these from the default set, which Docker shares with Fargate.
+DROPPED = [cap.name for cap in DROPPED_CAPABILITIES]
 pytestmark = [
     pytest.mark.container,
     pytest.mark.skipif(
@@ -37,8 +42,9 @@ def container():
     docker(
         "run", "-d", "--name", name, "--init", "--read-only",
         "--tmpfs", "/tmp:mode=1777", "--tmpfs", "/workspace:mode=2770,uid=10001,gid=10002",
-        "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID",
+        *[arg for cap in DROPPED for arg in ("--cap-drop", cap)],
         "-e", "CIA_PROVIDER=fake", "-e", f"ANTHROPIC_API_KEY={KEY}",
+        "-e", f"EXEC_TIMEOUT_S={EXEC_TIMEOUT_S}",
         "-p", "127.0.0.1::8080", image,
     )  # fmt: skip
     port = docker("port", name, "8080/tcp").stdout.split(":")[-1].strip()
@@ -99,8 +105,10 @@ def test_model_code_cannot_read_key_through_the_api(container):
         "import os; print(open(f'/proc/{os.getppid()}/environ').read())",
         "import os; print(os.environ.get('ANTHROPIC_API_KEY'))",
     )
-    for code in attempts:
-        assert KEY not in run_code(base, code), code
+    for code, expected in zip(attempts, ("PermissionError", "PermissionError", "stdout:\nNone")):
+        out = run_code(base, code)
+        assert KEY not in out, code
+        assert expected in out, (code, out)
 
 
 def test_kernel_denies_sandbox_uid_without_the_audit_hook(container):
@@ -129,13 +137,40 @@ def test_positive_control_same_uid_can_read_a_sibling_environ(container):
     assert KEY in exec_as(name, "10001:10001", probe).stdout
 
 
-def test_service_has_only_setuid_and_setgid(container):
+def test_worker_has_no_capabilities_and_cannot_become_root(container):
+    """A change between two nonzero UIDs keeps capabilities, so the worker must start through a
+    step that clears them. Without it, model code could call os.setuid(0)."""
+    _, base = container
+    out = run_code(
+        base,
+        "print({l.split(':')[0]: l.split()[1] for l in open('/proc/self/status') "
+        "if l.startswith('Cap')})",
+        session="caps",
+    )
+    caps = ast.literal_eval(out.removeprefix("stdout:\n"))
+    # The bounding set stays at 0xe0 (lowering it needs CAP_SETPCAP); with the other sets empty
+    # and no_new_privs set, the worker cannot acquire anything from it.
+    for field in ("CapInh", "CapPrm", "CapEff", "CapAmb"):
+        assert int(caps[field], 16) == 0, (field, caps)
+    out = run_code(base, "import os; os.setuid(0)", session="caps")
+    assert "PermissionError: [Errno 1] Operation not permitted" in out, out
+
+
+def test_timeout_kills_the_worker_and_the_session_recovers(container):
+    """The API runs as UID 10001 and the worker as 10002; killing it needs CAP_KILL."""
+    _, base = container
+    out = run_code(base, "import time; time.sleep(600)", session="slow")
+    assert f"exceeded the {EXEC_TIMEOUT_S} second time limit" in out, out
+    assert "6" in run_code(base, "print(2*3)", session="slow")
+
+
+def test_service_has_only_setuid_setgid_and_kill(container):
     name, _ = container
     probe = FIND_SERVICE + "print(open(f'/proc/{pid}/status').read())"
     status = dict(
         line.split(":\t") for line in exec_as(name, "10001:10001", probe).stdout.splitlines()
         if line.startswith("Cap")
     )  # fmt: skip
-    # CAP_SETGID is bit 6 and CAP_SETUID is bit 7: 0xc0.
+    # CAP_KILL is bit 5, CAP_SETGID bit 6 and CAP_SETUID bit 7: 0xe0.
     for field in ("CapPrm", "CapEff", "CapAmb", "CapBnd"):
-        assert int(status[field], 16) == 0xC0, (field, status)
+        assert int(status[field], 16) == 0xE0, (field, status)

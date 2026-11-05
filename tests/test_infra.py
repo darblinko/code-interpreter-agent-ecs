@@ -9,6 +9,11 @@ PUBLIC = {
     "certificate_arn": "arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000",
     "public_ingress_cidr": "203.0.113.7/32",
 }
+# Default Linux capabilities of a Fargate container, from the ECS KernelCapabilities API reference.
+FARGATE_DEFAULT_CAPABILITIES = {
+    "AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "MKNOD",
+    "NET_BIND_SERVICE", "NET_RAW", "SETFCAP", "SETGID", "SETPCAP", "SETUID", "SYS_CHROOT",
+}  # fmt: skip
 # ecr:GetAuthorizationToken does not support resource-level permissions.
 WILDCARD_ALLOWED_ACTIONS = {"ecr:GetAuthorizationToken"}
 
@@ -144,9 +149,11 @@ def test_readonly_root_filesystem_and_writable_volumes(service):
     assert set(mounts) == {"/workspace", "/tmp"}
     assert not any(m.get("ReadOnly") for m in mounts.values())
     capabilities = definition["LinuxParameters"]["Capabilities"]
-    assert capabilities["Drop"] == ["ALL"]
-    # Exactly the two capabilities needed to start code workers under another UID.
-    assert sorted(capabilities["Add"]) == ["SETGID", "SETUID"]
+    # Fargate accepts only SYS_PTRACE in Add, so nothing is added. Dropping the rest of the
+    # Fargate default set leaves exactly SETUID, SETGID and KILL.
+    assert "Add" not in capabilities
+    assert FARGATE_DEFAULT_CAPABILITIES - set(capabilities["Drop"]) == {"KILL", "SETGID", "SETUID"}
+    assert set(capabilities["Drop"]) <= FARGATE_DEFAULT_CAPABILITIES
     assert definition["PortMappings"][0]["ContainerPort"] == 8080
 
 

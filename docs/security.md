@@ -16,7 +16,8 @@ The service executes Python written by a language model, steered by whatever tex
 | Restricted public mode | `public_https=true` | Requires an ACM certificate and a non-`0.0.0.0/0` CIDR; the stack refuses to synthesize otherwise. |
 | Egress limited to TCP 443 | task security group | Blocks other protocols and ports. DNS goes through the VPC resolver. |
 | Read-only root filesystem | task definition | Code cannot modify the image contents. Writable paths are `/workspace` and `/tmp` only. |
-| Capabilities: ALL dropped, `SETUID` and `SETGID` added | task definition | The API process needs these two to start code workers under another UID. A test asserts the added set is exactly these two. |
+| Capabilities: Fargate defaults dropped except `SETUID`, `SETGID` and `KILL` | task definition | The API process needs these three to start code workers under another UID and to kill them on timeout. Fargate accepts only `SYS_PTRACE` as an added capability, so the task definition adds nothing and drops the other 11 defaults. A test asserts the remaining set. |
+| Workers start with no capabilities | `service/executor.py` | A change between two nonzero UIDs keeps capabilities, so workers are started through `setpriv`, which clears the inheritable and ambient sets before Python runs. The container test asserts `CapInh`, `CapPrm`, `CapEff` and `CapAmb` are 0 in a worker and that `os.setuid(0)` fails. |
 | Model code runs as UID 10002, API as UID 10001 | image entrypoint, `service/executor.py` | The kernel refuses code workers read access to `/proc/<pid>/environ` of the API process and of PID 1. Workers get an empty environment (8 fixed variables). |
 | `no_new_privs`, setuid bits removed | image | Workers cannot gain privileges by running setuid programs. |
 | Log retention 14 days | log group | Bounds how long outputs are stored. |
@@ -24,8 +25,8 @@ The service executes Python written by a language model, steered by whatever tex
 ## What it does not provide
 
 1. **Task role credentials are reachable by model code.** ECS serves them to any process in the container through `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` and `169.254.170.2`. This is why the role is empty. Do not attach policies to it. Adding S3, DynamoDB or any other grant gives the model that grant.
-2. **API keys: mitigated, with residual exposure.** ECS injects `ANTHROPIC_API_KEY` into the container environment. The entrypoint starts as root, runs `setpriv` to switch to UID 10001 and execs the API, so the key sits in the environment of a process that code workers (UID 10002) cannot read. `tests/test_container_isolation.py` (run with `CIA_CONTAINER_TESTS=1`) builds the image, runs it with the task definition's capabilities and read-only root, and checks: worker env has no key; as UID 10002 without the audit hook, `/proc/1/environ` and the API process's `/proc/<pid>/environ` return `EACCES`; the API process holds exactly `CapPrm=CapEff=CapAmb=CapBnd=0xc0` (SETUID, SETGID). Residual exposure:
-   - The API process keeps `CAP_SETUID` and `CAP_SETGID`. A remote code execution bug in the API (not in model code) could use them to become any UID, including root, within the container, and read the key. Model code cannot reach the API process except through the HTTP interface.
+2. **API keys: mitigated, with residual exposure.** ECS injects `ANTHROPIC_API_KEY` into the container environment. The entrypoint starts as root, runs `setpriv` to switch to UID 10001 and execs the API, so the key sits in the environment of a process that code workers (UID 10002) cannot read. `tests/test_container_isolation.py` (run with `CIA_CONTAINER_TESTS=1`) builds the image, runs it with the task definition's capabilities and read-only root, and checks: worker env has no key; as UID 10002 without the audit hook, `/proc/1/environ` and the API process's `/proc/<pid>/environ` return `EACCES`; the API process holds exactly `CapPrm=CapEff=CapAmb=CapBnd=0xe0` (KILL, SETGID, SETUID); a worker holds no capabilities and cannot call `os.setuid(0)`; a worker that sleeps past the timeout is killed. The test reproduces the capability set with `docker run --cap-drop`; it has not been run on Fargate. Residual exposure:
+   - The API process keeps `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL`. A remote code execution bug in the API (not in model code) could use them to become any UID, including root, within the container, and read the key. Model code cannot reach the API process except through the HTTP interface.
    - The key is in the memory of the API process and in PID 1's original environment block (root only). Anything that breaks the UID boundary (a kernel privilege escalation, which Fargate microVM isolation does not prevent inside the task) exposes it.
    - Model code can still make the API process do work with the key, for example by sending prompts, because it is the agent. It cannot read the key. A provider-side spend limit remains advisable.
    - All sessions share UID 10002. Session separation inside a task is the audit hook and per-session directories (item 4).
@@ -42,7 +43,7 @@ The service executes Python written by a language model, steered by whatever tex
 |---|---|
 | Model code reads AWS credentials from metadata endpoint | Mitigated: role is empty |
 | Model code reaches other AWS services | Mitigated: no permissions; not eliminated for unauthenticated APIs reachable from the VPC |
-| Model code reads the API key | Mitigated by UID separation (item 2); residual: API process holds SETUID and SETGID |
+| Model code reads the API key | Mitigated by UID separation (item 2); residual: API process holds SETUID, SETGID and KILL |
 | Model code exfiltrates data over HTTPS | Not mitigated (item 3) |
 | Internet user calls `/v1/run` | Mitigated by default (internal ALB); user responsibility in public mode |
 | Container escape to another tenant | Reduced by Fargate microVM isolation; AWS shared responsibility model applies |

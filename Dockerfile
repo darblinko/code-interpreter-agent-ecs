@@ -26,12 +26,13 @@ RUN python -m compileall -q /app
 EXPOSE 8080
 
 # The container starts as root only so that setpriv can switch to the app user. It then keeps
-# CAP_SETUID and CAP_SETGID as ambient capabilities, which the API process needs to start code
-# workers as the sandbox user, and drops every other capability from the effective, permitted and
-# inheritable sets (the bounding set is limited by the task definition, which drops ALL and adds
-# only these two). no_new_privs blocks regaining
-# privileges through setuid programs.
+# CAP_SETUID, CAP_SETGID and CAP_KILL as ambient capabilities, which the API process needs to
+# start code workers as the sandbox user and to kill them on timeout, and drops every other
+# capability from the effective, permitted and inheritable sets. The bounding set is limited by
+# the task definition, which drops every default capability except these three. Workers are
+# started through setpriv again, which clears their inheritable and ambient sets, so model code
+# runs with no capabilities. no_new_privs blocks regaining privileges through setuid programs.
 ENTRYPOINT ["setpriv", "--reuid=10001", "--regid=10001", "--groups=10002", \
-    "--inh-caps=-all,+setuid,+setgid", "--ambient-caps=-all,+setuid,+setgid", \
+    "--inh-caps=-all,+setuid,+setgid,+kill", "--ambient-caps=-all,+setuid,+setgid,+kill", \
     "--no-new-privs", "--"]
 CMD ["python", "-m", "service"]

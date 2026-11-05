@@ -2,9 +2,11 @@
 
 The service process holds the model API keys in its environment. Workers run as another
 UID with an empty environment, so the kernel refuses their reads of the service's
-/proc/<pid>/environ. The service needs CAP_SETUID and CAP_SETGID (granted as ambient
-capabilities by the entrypoint) to start a child under another UID. The child loses them
-when it changes UID.
+/proc/<pid>/environ. The service holds CAP_SETUID, CAP_SETGID and CAP_KILL as ambient
+capabilities (granted by the entrypoint) to start workers under another UID and to kill them
+on timeout. A change between two nonzero UIDs does not clear capabilities, so each worker is
+started through setpriv, which switches the UID and clears the inheritable and ambient sets
+before it executes Python. The worker therefore starts with empty capability sets.
 """
 
 from __future__ import annotations
@@ -39,6 +41,13 @@ class DroppedPrivilegeExecutor(SubprocessExecutor):
             os.chown(directory, -1, self.gid)
             directory.chmod(0o2770)
         command = [
+            "setpriv",
+            f"--reuid={self.uid}",
+            f"--regid={self.gid}",
+            "--clear-groups",
+            "--inh-caps=-all",
+            "--ambient-caps=-all",
+            "--",
             sys.executable,
             "-I",
             str(WORKER_SCRIPT),
@@ -57,8 +66,5 @@ class DroppedPrivilegeExecutor(SubprocessExecutor):
             text=True,
             encoding="utf-8",
             start_new_session=True,
-            user=self.uid,
-            group=self.gid,
-            extra_groups=[],
             umask=0o002,
         )

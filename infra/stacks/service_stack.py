@@ -21,6 +21,20 @@ from .config import Config
 SERVICE_STACK_NAME = "CodeInterpreterAgentService"
 CONTAINER_PORT = 8080
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# The Fargate default capability set minus SETUID, SETGID and KILL.
+DROPPED_CAPABILITIES = (
+    ecs.Capability.AUDIT_WRITE,
+    ecs.Capability.CHOWN,
+    ecs.Capability.DAC_OVERRIDE,
+    ecs.Capability.FOWNER,
+    ecs.Capability.FSETID,
+    ecs.Capability.MKNOD,
+    ecs.Capability.NET_BIND_SERVICE,
+    ecs.Capability.NET_RAW,
+    ecs.Capability.SETFCAP,
+    ecs.Capability.SETPCAP,
+    ecs.Capability.SYS_CHROOT,
+)
 IMAGE_EXCLUDES = ["infra", "cdk.out", ".git", ".venv", "docs", "scripts", ".env", ".env.*", "**/__pycache__"]
 
 
@@ -133,10 +147,11 @@ class ServiceStack(cdk.Stack):
 
     def _linux_parameters(self) -> ecs.LinuxParameters:
         params = ecs.LinuxParameters(self, "LinuxParams", init_process_enabled=True)
-        params.drop_capabilities(ecs.Capability.ALL)
-        # The entrypoint starts as root to switch to the app user and keeps these two so the
-        # API process can start code workers under the sandbox UID. See docs/security.md.
-        params.add_capabilities(ecs.Capability.SETUID, ecs.Capability.SETGID)
+        # Fargate accepts only SYS_PTRACE in "add", so the needed capabilities are kept by
+        # dropping every other one from the Fargate default set. The entrypoint starts as root,
+        # switches to the app user and keeps SETUID, SETGID and KILL so the API process can
+        # start code workers under the sandbox UID and kill them. See docs/security.md.
+        params.drop_capabilities(*DROPPED_CAPABILITIES)
         return params
 
     def _build_image(self, arch: str) -> ecs.ContainerImage:

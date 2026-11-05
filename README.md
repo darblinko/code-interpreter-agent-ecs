@@ -21,7 +21,7 @@ The repository holds the infrastructure, the deployment aids, and the applicatio
 
 ## The application
 
-The image starts as root only to run `setpriv`, which switches to UID 10001 (`app`) with `CAP_SETUID` and `CAP_SETGID` as the only capabilities and `no_new_privs` set. The API process runs as `app` and holds the model keys. Model-written code runs in worker processes started under UID 10002 (`sandbox`) with an empty environment. See `docs/security.md` for what this protects.
+The image starts as root only to run `setpriv`, which switches to UID 10001 (`app`) with `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL` as the only capabilities and `no_new_privs` set. The API process runs as `app` and holds the model keys. Model-written code runs in worker processes started through `setpriv` under UID 10002 (`sandbox`) with an empty environment and empty inheritable, permitted, effective and ambient capability sets. See `docs/security.md` for what this protects.
 
 ### API
 

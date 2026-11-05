@@ -13,7 +13,7 @@ def test_worker_is_started_under_the_sandbox_uid_with_a_scrubbed_environment(tmp
     seen = {}
 
     def fake_popen(command, **kwargs):
-        seen.update(kwargs)
+        seen.update(kwargs, command=command)
         raise Captured
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -26,7 +26,18 @@ def test_worker_is_started_under_the_sandbox_uid_with_a_scrubbed_environment(tmp
         pass
     finally:
         executor.close()
-    assert (seen["user"], seen["group"], seen["extra_groups"]) == (10002, 10002, [])
+    # setpriv switches the UID and clears the inheritable and ambient capability sets, which a
+    # plain change between two nonzero UIDs would keep.
+    separator = seen["command"].index("--")
+    assert seen["command"][:separator] == [
+        "setpriv",
+        "--reuid=10002",
+        "--regid=10002",
+        "--clear-groups",
+        "--inh-caps=-all",
+        "--ambient-caps=-all",
+    ]
+    assert not {"user", "group", "extra_groups"} & set(seen)
     assert "ANTHROPIC_API_KEY" not in seen["env"]
     assert "sk-ant-sentinel" not in "".join(seen["env"].values())
     assert seen["umask"] == 0o002
