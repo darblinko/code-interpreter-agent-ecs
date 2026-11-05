@@ -40,3 +40,13 @@ def test_default_estimate_exceeds_public_ip_estimate():
 def test_default_budget_exceeds_default_estimate():
     context = estimate_cost.load_context([])
     assert float(context["monthly_budget_usd"]) > sum(a for _, a in estimate_cost.estimate(context))
+
+
+def test_destroy_finds_retained_resources_by_name_after_stack_deletion():
+    """A second run with --purge must find what a first run without it left behind, when the
+    stacks no longer exist."""
+    text = (SCRIPTS / "destroy.sh").read_text()
+    body = text[text.index('delete_stack "$SERVICE_STACK"') :]
+    assert "--log-group-name-prefix" in text and "describe-stack-resources" not in text
+    assert "retained_log_groups" in body and "secret_exists" in body
+    assert "get-template" not in text

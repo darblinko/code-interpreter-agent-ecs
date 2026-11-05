@@ -4,6 +4,7 @@ INFRA_DIR="$REPO_ROOT/infra"
 CDK_CLI_VERSION="2.1147.0"
 SECRETS_STACK="CodeInterpreterAgentSecrets"
 SERVICE_STACK="CodeInterpreterAgentService"
+SECRET_NAME="code-interpreter-agent/api-keys"
 
 ok()   { printf '[ OK ]  %s\n' "$*"; }
 warn() { printf '[WARN]  %s\n' "$*"; }
