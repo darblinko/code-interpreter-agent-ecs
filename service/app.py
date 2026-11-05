@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import ipaddress
 import json
@@ -33,10 +34,8 @@ class RunRequest(BaseModel):
 
 def check_workspace_root(path: str) -> None:
     """Fail readiness, with the reason on /health, when the workspace volume is not writable."""
-    try:
+    with contextlib.suppress(OSError):
         os.makedirs(path, exist_ok=True)
-    except OSError:
-        pass
     if not os.path.isdir(path) or not os.access(path, os.W_OK | os.X_OK):
         raise ValueError(f"WORKSPACE_ROOT {path} is not a writable directory for UID {os.getuid()}")
 

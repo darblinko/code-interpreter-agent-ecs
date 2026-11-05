@@ -105,7 +105,8 @@ def test_model_code_cannot_read_key_through_the_api(container):
         "import os; print(open(f'/proc/{os.getppid()}/environ').read())",
         "import os; print(os.environ.get('ANTHROPIC_API_KEY'))",
     )
-    for code, expected in zip(attempts, ("PermissionError", "PermissionError", "stdout:\nNone")):
+    expectations = ("PermissionError", "PermissionError", "stdout:\nNone")
+    for code, expected in zip(attempts, expectations, strict=True):
         out = run_code(base, code)
         assert KEY not in out, code
         assert expected in out, (code, out)
