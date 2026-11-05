@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import threading
 from collections.abc import Callable, Iterator
 
@@ -28,7 +29,14 @@ class RunRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
+def check_workspace_root(path: str) -> None:
+    """Fail readiness, with the reason on /health, when the workspace volume is not writable."""
+    if not os.path.isdir(path) or not os.access(path, os.W_OK | os.X_OK):
+        raise ValueError(f"WORKSPACE_ROOT {path} is not a writable directory for UID {os.getuid()}")
+
+
 def build_service_agent(settings: Settings) -> Agent:
+    check_workspace_root(settings.workspace_root)
     options = {
         "workspace_root": settings.workspace_root,
         "timeout_s": settings.exec_timeout_s,

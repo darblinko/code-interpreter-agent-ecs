@@ -23,6 +23,9 @@ COPY src /app/src
 COPY service /app/service
 RUN python -m compileall -q /app
 
+# ECS copies an image directory into a task volume, with its ownership, only when the volume's
+# containerPath matches a VOLUME directive. Without it /workspace would be a root-owned mount.
+VOLUME ["/workspace", "/tmp"]
 EXPOSE 8080
 
 # The container starts as root only so that setpriv can switch to the app user. It then keeps

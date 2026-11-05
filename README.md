@@ -17,7 +17,7 @@ The repository holds the infrastructure, the deployment aids, and the applicatio
 | Scratch | `/tmp` is a second writable ephemeral volume |
 | Root filesystem | read-only; the image must not write anywhere except `/workspace` and `/tmp` |
 | Health probe | the container health check runs `python` against `http://127.0.0.1:8080/health`, so the image needs `python` on PATH |
-| Ownership | `/workspace` is created in the image as `10001:10002`, mode `2770`; Fargate volumes inherit ownership from an existing image directory |
+| Ownership | `/workspace` is created in the image as `10001:10002`, mode `2770`, and declared with `VOLUME`. ECS copies an image directory's contents and ownership into a task volume only when the mount path matches a `VOLUME` directive (AWS ECS bind mount documentation). This has not been verified on Fargate here; if `/workspace` is not writable by UID 10001, `/health` returns 503 with the reason. |
 
 ## The application
 

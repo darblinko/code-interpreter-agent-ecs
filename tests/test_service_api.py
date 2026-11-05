@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import os
 import threading
 
 import pytest
@@ -166,3 +167,16 @@ def test_same_session_concurrent_run_is_rejected(tmp_path):
 def test_docs_are_not_exposed(tmp_path, path):
     with make_client(tmp_path, []) as client:
         assert client.get(path).status_code == 404
+
+
+def test_unwritable_workspace_root_fails_readiness(tmp_path):
+    from service.app import check_workspace_root
+
+    check_workspace_root(str(tmp_path))
+    with pytest.raises(ValueError, match="not a writable directory"):
+        check_workspace_root(str(tmp_path / "missing"))
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    if os.geteuid() != 0:
+        with pytest.raises(ValueError, match="not a writable directory"):
+            check_workspace_root(str(locked))
